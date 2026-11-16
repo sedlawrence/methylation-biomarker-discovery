@@ -1,0 +1,22 @@
+# Do not version large downloaded inputs
+data/
+
+# Local R / Python environment cruft
+.Rlibrary/
+.Rhistory
+.RData
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+
+# Derived artifacts not needed in git
+Rplots.pdf
+
+# Do not track report sources or the older PDF
+reports/*.tex
+reports/Bioinformatician.pdf
+
+# GitHub hard limit is 100MB per file; keep the small summary tables/plots, drop the huge annotated table.
+results/differential_analysis/plots/annotated_results.tsv

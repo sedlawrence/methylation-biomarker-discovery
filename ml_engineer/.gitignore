@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Local data (do not commit)
+data/
+*.h5
+*.hdf5
+
+# Local report drafts for the write-up
+reports/summary.txt
+reports/adni_methylation_progression_report.tex
+
+# Common local env/IDE artifacts
+.env
+.venv/
+venv/
+.idea/
+.vscode/

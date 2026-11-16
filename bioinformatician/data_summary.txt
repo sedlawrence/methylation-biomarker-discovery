@@ -1,0 +1,125 @@
+GSE59685 is a GEO study-level series (GSE) of Illumina 450K DNA methylation array data. That means it is not RNA-seq or gene expression data: it measures DNA methylation at CpG sites across the genome.
+
+A few key translations:
+
+GSE = the whole study
+GSM = one sample/one array
+GPL13534 = the array platform used
+Each row in the methylation matrix is a CpG probe like cg00000029, not a gene
+Each column is a sample
+From the GEO page, this study has 531 samples from 122 donors across multiple tissues: entorhinal cortex, frontal cortex, superior temporal gyrus, cerebellum, and whole blood. The blood samples were collected pre-mortem; Braak stage is the neuropathology score assigned at autopsy, and higher Braak means more Alzheimer’s-type pathology.
+
+
+Downloaded files:
+
+GSE59685_betas.csv.gz: the main processed methylation matrix. Values are beta values from 0 to 1, where 0 is unmethylated and 1 is fully methylated. This already contains the 531 study samples.
+GSE59685_signal_intensities.csv.gz: lower-level array signals. For each sample it stores unmethylated intensity, methylated intensity, and detection p-value.
+GSE59685_SampleBarcode_Re-analyzedGSMs_NewGSMs.txt.gz: a mapping file between array barcode IDs and old/new GSM accessions.
+GSE59685_RAW.tar: contains platform manifest/annotation files, not the sample-level IDATs.
+
+
+
+*** Step 1 — Data Loading and QC ****
+
+Filter GSE59685_signal_intensities.csv.gz to 531 "barcodes" in study, then down again to 80 blood barcodes.
+
+Filter further on following QC metrics:
+    -- Drop samples with >1% of probes having detection pval > 0.01 (evidence against background-only signal) (drop zero)
+    -- Drop probes that fail detection in many samples (1002/485577 >5% of blood samples with detection pval > 0.01)
+    -- Intensity outlies; per sample, look at median/mean of methylated + unmethylated signal, remove low-intensity outliers (zero discarded by Q1 -1.5* IQR)
+    -- Remove SNP influence probes (flagged as Probe_SNPs_10)
+    -- Remove Sex chromosomes
+    -- Remove multi-mapping probes (Benton MC et al. Genome Biology (2015) doi:10.1186/s13059-014-0569-x
+        Bowtie2 multi-mapper list is distributed here:
+        https://github.com/sirselim/illumina450k_filtering
+        )
+    -- Remove non-specific cross-reactive probes using data/chen_48639_non_specific_450k.csv (Chen et. al.)
+    -- Remove non-variable probes: Compute MAD(M) , within a probe, across all samples for every probe and drop the bottom 10% (e.g. bottom 10–20%)
+
+*** Step 2 Normalisation ***
+
+    -- Use betas.csv.gz as they are Dasen-normalised
+    -- Advantages of this choice: Key Features of Dasen Normalisation
+        1) equalises the background intensities of Type I and Type II probes before proceeding further
+        2) adjusts methylated and unmethylated signal intensities separately.
+        Probe-Type Handling: It addresses the differences between the two chemistry types (Type I and Type II probes) inherent in Illumina's chip design to ensure they are comparable.
+        Performance: Studies have shown that dasen is highly effective at reducing technical variation, often performing well in benchmarks comparing it to other methods like funnorm or BMIQ
+        Criticisms: Normalises autosomal and sex based probes collectively
+
+
+*** Step 3 Differential Analysis ***
+
+    -- Use QC outputs from Step 1 (whole blood only):
+        results/gse59685_qc/sample_qc.tsv.gz (sample_final_keep)
+        results/gse59685_qc/probe_qc.tsv.gz (final_keep)
+
+    -- Use the processed beta matrix:
+        data/GSE59685_betas.csv.gz
+        Note: this is already dasen-normalised (per the GEO processed-data note), so we do not re-normalise again.
+
+    -- Convert Braak to a binary case/control variable (per take-home instructions):
+        Controls: Braak <= 2
+        Cases: Braak >= 3
+        Drop any samples with braak_stage = "Exclude"
+
+    -- Adjust for blood cell composition (Houseman-style) using minfi + FlowSorted.Blood.450k:
+        Because we do not have IDATs, we cannot run minfi::estimateCellCounts() directly on an RGChannelSet.
+        Instead we:
+            1) preprocessQuantile() the FlowSorted.Blood.450k reference
+            2) select discriminating probes with minfi:::pickCompProbes()
+            3) project our beta matrix onto the reference coefficients with minfi:::projectCellType()
+        This yields estimated proportions for: CD8T, CD4T, NK, Bcell, Mono, Gran
+
+    -- Run limma on M-values (better behaved for linear modelling than raw betas):
+        M = log2(beta / (1 - beta)) after clipping beta away from 0/1 to avoid infinite values
+        Fit model:
+            M ~ case + age_blood + sex + cell_proportions
+        Drop one cell-type covariate (Gran by default) to avoid collinearity since proportions sum to ~1.
+        Use empirical Bayes moderation (limma::eBayes) and BH FDR correction over all tested probes.
+
+    -- Outputs from this step (scripts/02_differential_analysis.R):
+        results/differential_analysis/samples_used.tsv
+        results/differential_analysis/cell_proportions.tsv
+        results/differential_analysis/limma_dmps.tsv
+
+    -- Summary of the run:
+        Whole blood samples QC-passed: 80
+        Samples used in differential model after Braak binning/exclusions: 72
+            Controls: 7
+            Cases: 65
+        Probes tested after QC + filtering: 364,357
+        Strongest raw p-values are in the ~1e-6 range, but no probe meets FDR < 0.05 (min adj.P.Val ~ 0.49).
+        Under the strict “hit” definition (adj.P.Val < 0.05 AND |delta_beta_model| >= 0.05), there are 0 hits.
+
+
+*** Step 4 Display Plots ***
+
+    -- Annotate and visualise differential methylation results (scripts/03_plot_results.R)
+        Inputs:
+            results/differential_analysis/limma_dmps.tsv
+            results/differential_analysis/samples_used.tsv
+            data/GSE59685_betas.csv.gz (for plotting raw beta distributions)
+            data/GPL13534_HumanMethylation450_15017482_v.1.1.csv.gz (probe annotation: CHR, MAPINFO, gene/cpg context)
+
+    -- Select “strict hits” for reporting:
+        hits := adj.P.Val < 0.05 AND |delta_beta_model| >= 0.05
+        If there are no strict hits (as in this run), fall back to the top-ranked probes by p-value for tables/plots.
+
+    -- Plot outputs written to:
+        results/differential_analysis/plots/
+
+    -- Generated plots:
+        volcano_plot.png (delta_beta_model vs -log10(adj.P.Val))
+        qq_plot.png (QQ plot of raw p-values)
+        pvalue_histogram.png (raw p-value histogram)
+        top_cpg_beta_distribution.png (top CpG beta boxplots by case/control)
+        cell_proportions_by_case.png (cell proportion boxplots by case/control)
+        heatmap_top_50_dmps.png (heatmap of top 50 ranked probes)
+        manhattan_plot.png (genome-wide Manhattan plot using CHR/MAPINFO)
+        regional_plot_top_locus.png (regional plot around the top-ranked probe)
+        regional_plot_known_ad_locus.png (regional plot around a known AD locus if present; in this run, SLC24A4)
+
+    -- Tables:
+        annotated_results.tsv (results merged with manifest annotations; large)
+        top_dmp_table.tsv (compact ranked table with gene/context columns)
+        significant_hits.tsv (strict hits only; header-only if none)
