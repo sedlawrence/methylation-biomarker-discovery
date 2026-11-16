@@ -1,1 +1,20 @@
-.DS_Store
+# Operating system and local environment files
+**/.DS_Store
+**/.venv/
+**/venv/
+**/__pycache__/
+*.py[cod]
+**/.Rhistory
+**/.RData
+**/.Rproj.user/
+
+# Downloaded and locally supplied input data
+/bioinformatician/data/
+/ml_engineer/data/*.h5
+/ml_engineer/data/*.hdf5
+/data/*.h5
+
+# Regenerable analysis outputs
+/results/
+/bioinformatician/results/
+/ml_engineer/results/
